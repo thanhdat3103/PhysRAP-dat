@@ -1,14 +1,16 @@
+import os
 import torch
 import numpy as np
 from torch.utils.data import DataLoader
-from datasets.rppg_datasets import VIPL, UBFC, PURE, BUAA, UBFCA, PUREA, BUAAA
+from datasets.rppg_datasets import VIPL, PURE, PUREA
 from losses.NPLoss import Neg_Pearson
 from losses.CELoss import CrossEntropyKL
 from archs.ResNet3D import generate_model
 
 dataset_path_map = {
-    'PURE': '/data/your_path/pure',
-    'PUREA': '/data/your_path/pure',
+    'PURE': os.environ.get('PHYSRAP_PURE_DIR', '/data/your_path/pure'),
+    'PUREA': os.environ.get('PHYSRAP_PURE_DIR', '/data/your_path/pure'),
+    'VIPL': os.environ.get('PHYSRAP_VIPL_DIR', '/data/your_path/vipl'),
 }
 
 def _init_fn(seed=92):
@@ -19,31 +21,45 @@ def build_one_dataset(dataset_name, args, mode):
         'train': args.num_rppg,
         'train_all': args.num_rppg,
         'test_all': -1,
-        'test' : -1,
+        'test': -1,
     }
 
     num_rppg = mode_num_rppg[mode]
     train_mode = mode
 
     if dataset_name == 'PURE':
-        dataset = PURE(data_dir=dataset_path_map[dataset_name], T=num_rppg,
-                       train=train_mode, w=args.img_size, h=args.img_size)
-    # -------------------------------------------------------
-    ## PURE-A dataset
+        dataset = PURE(
+            data_dir=dataset_path_map[dataset_name],
+            T=num_rppg,
+            train=train_mode,
+            w=args.img_size,
+            h=args.img_size
+        )
     elif dataset_name == 'PUREA':
-        dataset = PUREA(data_dir=dataset_path_map[dataset_name], T=num_rppg,
-                       train=train_mode, w=args.img_size, h=args.img_size)
+        dataset = PUREA(
+            data_dir=dataset_path_map[dataset_name],
+            T=num_rppg,
+            train=train_mode,
+            w=args.img_size,
+            h=args.img_size
+        )
+    elif dataset_name == 'VIPL':
+        dataset = VIPL(
+            data_dir=dataset_path_map[dataset_name],
+            T=num_rppg,
+            train=train_mode,
+            w=args.img_size,
+            h=args.img_size,
+            fold=args.vipl_fold
+        )
     else:
-        raise NotImplementedError
+        raise NotImplementedError(f"Dataset not supported in engine.py: {dataset_name}")
 
     return dataset
 
 def build_dataset(args, mode, batch_size):
-    shuffle_flag = mode == 'train'
-    
+    shuffle_flag = mode in ('train', 'train_all')
     datasets = args.datasets.split('_')
-    
-
     all_dataloader = []
     
     for dataset_name in datasets:
@@ -127,8 +143,4 @@ def build_model(args):
         model = generate_model(model_depth=18, num_frames=args.num_rppg)
     else:
         raise NotImplementedError
-    return model  
-
-
-        
-        
+    return model

@@ -9,7 +9,7 @@ some codes are from https://github.com/rotemtzaban/STIT.
 before using the face_align functions, you need to download the shape_predictor_68_face_landmarks.dat file to ./
 '''
 
-import torch, math, PIL, dlib, face_alignment, scipy
+import torch, math, scipy
 import scipy.ndimage
 import skimage.io as io
 import numpy as np

@@ -4,6 +4,7 @@ import h5py
 import numpy as np
 import scipy.io as sio
 import torch
+import csv
 from torch.utils.data import Dataset
 from datasets import transforms
 # import transforms
@@ -227,3 +228,57 @@ class PURE(BaseDataset):
 class PUREA(PURE):
     def __init__(self, data_dir='', train='train', T=-1, w=64, h=64):
         super().__init__(data_dir, train, T, w, h, aug='figc')
+
+class VIPL(BaseDataset):
+    def __init__(self, data_dir='', train='train', T=-1, w=64, h=64, aug='', fold=1, manifest_path=None):
+        self.fold = int(fold)
+        self.manifest_path = manifest_path or os.environ.get('PHYSRAP_VIPL_MANIFEST', '')
+        if not self.manifest_path:
+            raise ValueError("VIPL requires PHYSRAP_VIPL_MANIFEST to be set")
+        super().__init__(data_dir, train, T, w, h, aug=aug)
+
+    def get_data_list(self):
+        with open(self.manifest_path, 'r', newline='') as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+
+        for row in rows:
+            modality = str(row.get('modality', '')).strip().lower()
+            is_complete = str(row.get('is_complete', '')).strip().lower()
+            sample_id = str(row.get('sample_id', '')).strip()
+            fold = int(row.get('fold', -1))
+
+            if modality != 'vis':
+                continue
+            if is_complete not in ('true', '1', 'yes'):
+                continue
+            if not sample_id:
+                continue
+
+            sample_dir = os.path.join(self.data_dir, sample_id)
+            h5_path = os.path.join(sample_dir, 'sample.hdf5')
+            if not os.path.exists(h5_path):
+                continue
+
+            if self.train in ('train', 'train_all'):
+                if fold == self.fold:
+                    continue
+            elif self.train in ('test', 'test_all'):
+                if fold != self.fold:
+                    continue
+            else:
+                raise NotImplementedError
+
+            with h5py.File(h5_path, 'r') as hf:
+                video_length = hf['video_data'].shape[1]
+
+            if self.T != -1 and video_length < self.T:
+                continue
+
+            sample_num = video_length // self.T if self.T != -1 else 1
+            for i in range(sample_num):
+                sample = {}
+                sample['location'] = sample_dir
+                sample['start_idx'] = i * self.T if self.T != -1 else 0
+                sample['video_length'] = video_length
+                self.data_list.append(sample)

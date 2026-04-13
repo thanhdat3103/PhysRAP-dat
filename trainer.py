@@ -321,7 +321,7 @@ class RppgEstimatorTrainer:
         def argumation(inputs):
             # inputs : [B, T, C, H, W]
             # outputs : argumation_inputs [N: [B, T, C, H, W]]
-            N = 10
+            N = self.args.tta_num_augs
             aug_videos = []
             available_augs = [augment_gaussian_noise, random_resized_crop, augment_flip, augment_time_reversal]
             for _ in range(N):
@@ -437,8 +437,8 @@ class RppgEstimatorTrainer:
                             fim_matrix[i, j] = sim_score.item()
                     need_to_update = {}
                     diag_fim = torch.diag(fim_matrix) #! 对角线 [M,]
-                    save_ratio = 0.8 #! 敏感度位于前1-save_ratio的更新，保留a%
-                    related_save_ratio = 0.2 #! 对于每个模块，选择关联度位于前related_save_ratio的不更新，保留a%
+                    save_ratio = self.args.tta_save_ratio
+                    related_save_ratio = self.args.tta_related_save_ratio
                     threshold = torch.sort(diag_fim, descending=True)[0][int(diag_fim.shape[0] * (1 - save_ratio))] # 敏感度高于的a%的更新，保留1-a% 
                     for i in range(diag_fim.shape[0]):
                         if diag_fim[i] > threshold:
@@ -450,7 +450,7 @@ class RppgEstimatorTrainer:
                 
                 ## ! Look for future, get the future_grad for the augmentated inputs
                 self.optimizer.zero_grad()
-                K = 4
+                K = self.args.tta_future_steps
                 for i in range(K):
                     selected_inputs = random.choice(augment_inputs)
                     selected_rppg = self.rppg_estimator_stu({'input_clip' : selected_inputs})['rPPG']
@@ -496,7 +496,7 @@ class RppgEstimatorTrainer:
                                 p.data = origional_params[f"{nm}.{npp}"] * mask + p * (1.-mask)
                 
                 ## ! ema update the teacher model
-                alpha = 0.99
+                alpha = self.args.tta_teacher_alpha
                 for param_teacher, param_student in zip(self.rppg_estimator_teacher.parameters(), self.rppg_estimator_stu.parameters()):
                     param_teacher.data = alpha * param_teacher.data + (1 - alpha) * param_student.data
             
@@ -602,6 +602,12 @@ if __name__ == '__main__':
     parser.add_argument('--scheduler', type=str, default='step', help='scheduler = [step]')
     parser.add_argument('--step_size', type=int, default=50, help='learning rate decay step size')
     parser.add_argument('--gamma', type=float, default=0.1, help='learning rate decay')
+
+    parser.add_argument('--tta_num_augs', type=int, default=10)
+    parser.add_argument('--tta_future_steps', type=int, default=4)
+    parser.add_argument('--tta_save_ratio', type=float, default=0.8)
+    parser.add_argument('--tta_related_save_ratio', type=float, default=0.2)
+    parser.add_argument('--tta_teacher_alpha', type=float, default=0.99)
 
     args = parser.parse_args()
 
