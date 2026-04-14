@@ -289,6 +289,10 @@ class RppgEstimatorTrainer:
             # inputs: [B, C, T, H, W]
             # outputs: list of augmented clips
             N = self.args.tta_num_augs
+
+            if self.args.tta_aug_mode == 'identity':
+                return [inputs.clone() for _ in range(N)]
+
             aug_videos = []
             available_augs = [
                 augment_gaussian_noise,
@@ -329,8 +333,12 @@ class RppgEstimatorTrainer:
         use_rs = ablation_mode in ['full', 'priors_rs']
         use_pa = ablation_mode in ['full', 'priors_pa']
 
-        self.logger.info(f'[ABLATION] mode={ablation_mode}, use_rs={use_rs}, use_pa={use_pa}')
-        print(f'[ABLATION] mode={ablation_mode}, use_rs={use_rs}, use_pa={use_pa}')
+        self.logger.info(
+            f'[ABLATION] mode={ablation_mode}, use_rs={use_rs}, use_pa={use_pa}, tta_aug_mode={self.args.tta_aug_mode}'
+        )
+        print(
+            f'[ABLATION] mode={ablation_mode}, use_rs={use_rs}, use_pa={use_pa}, tta_aug_mode={self.args.tta_aug_mode}'
+        )
 
         tta_dataloader = self.val_dataloaders[dataset_idx]
         hr_gt = []
@@ -607,7 +615,8 @@ class RppgEstimatorTrainer:
             f'prepare train, load ckpt and block gradient, start_dataset_idx: {start_dataset_idx}, gpu: {self.gpu_list}.\n'
             f'dataset: {self.args.datasets}, num_rppg: {self.args.num_rppg}, model: {self.args.model}, loss: {self.loss_funcs_weight}.\n'
             f'batch_size: {self.actual_batch_size}, lr: {self.args.lr}, optim: {self.args.optim}, scheduler: {self.args.scheduler}.\n'
-            f'ablation_mode: {self.args.ablation_mode}'
+            f'ablation_mode: {self.args.ablation_mode}\n'
+            f'tta_aug_mode: {self.args.tta_aug_mode}'
         )
 
         if start_dataset_idx == 0:
@@ -681,6 +690,13 @@ if __name__ == '__main__':
         type=str,
         default='full',
         choices=['full', 'priors_only', 'priors_pa', 'priors_rs']
+    )
+
+    parser.add_argument(
+        '--tta_aug_mode',
+        type=str,
+        default='all',
+        choices=['all', 'identity']
     )
 
     args = parser.parse_args()
