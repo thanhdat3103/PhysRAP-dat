@@ -293,6 +293,21 @@ class RppgEstimatorTrainer:
             if self.args.tta_aug_mode == 'identity':
                 return [inputs.clone() for _ in range(N)]
 
+            if self.args.tta_aug_mode == 'gaussian_only':
+                return [augment_gaussian_noise(inputs) for _ in range(N)]
+
+            if self.args.tta_aug_mode == 'crop_only':
+                return [random_resized_crop(inputs) for _ in range(N)]
+
+            if self.args.tta_aug_mode == 'flip_only':
+                return [augment_flip(inputs) for _ in range(N)]
+
+            if self.args.tta_aug_mode == 'reverse_only':
+                return [augment_time_reversal(inputs) for _ in range(N)]
+
+            if self.args.tta_aug_mode == 'gaussian_crop':
+                return [random_resized_crop(augment_gaussian_noise(inputs)) for _ in range(N)]
+
             aug_videos = []
             available_augs = [
                 augment_gaussian_noise,
@@ -696,7 +711,15 @@ if __name__ == '__main__':
         '--tta_aug_mode',
         type=str,
         default='all',
-        choices=['all', 'identity']
+        choices=[
+            'all',
+            'identity',
+            'gaussian_only',
+            'crop_only',
+            'flip_only',
+            'reverse_only',
+            'gaussian_crop'
+        ]
     )
 
     args = parser.parse_args()
