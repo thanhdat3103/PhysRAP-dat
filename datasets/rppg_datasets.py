@@ -99,9 +99,15 @@ class BaseDataset(Dataset):
         self.aug_gauss = True if 'g' in self.aug else False
         self.aug_speed = True if 's' in self.aug else False
         self.aug_resizedcrop = True if 'c' in self.aug else False
-        self.aug_reverse = True ## Don't use this with supervised
+        self.aug_reverse = False
     
     def apply_transformations(self, clip, idcs, augment=True):
+        if not augment:
+            clip = clip[idcs].transpose(3, 0, 1, 2)   # (T,H,W,C) -> (C,T,H,W)
+            clip = np.clip(clip, 0, 255).astype(np.float32)
+            clip = clip / 255.0
+            clip = torch.from_numpy(clip).float()
+            return clip, idcs, 1.0
         speed = 1.0
         if True:
             ## Time resampling
@@ -162,7 +168,8 @@ class BaseDataset(Dataset):
                 ecg = np.array(f['ecg_data'][start_idx: start_idx + int(self.T * 1.5)]) # T
 
         idcs = np.arange(0, self.T, dtype=int) if self.T != -1 else np.arange(len(video_x), dtype=int)
-        video_x_aug, speed_idcs, speed = self.apply_transformations(video_x, idcs)
+        do_aug = self.train in ('train', 'train_all')
+        video_x_aug, speed_idcs, speed = self.apply_transformations(video_x, idcs, augment=do_aug)
 
         # print(f'shape of video_x_aug: {video_x_aug.shape}')
 
