@@ -195,11 +195,8 @@ class RppgEstimatorTrainer:
 
         with torch.no_grad():
             for sample_batched in tqdm(val_dataloader):
-                inputs, ecg, clip_average_HR = sample_batched['video'].to(self.device), \
-                    sample_batched['ecg'].to(self.device), sample_batched['clip_avg_hr'].to(self.device)
-
-                for hr in clip_average_HR:
-                    hr_gt.append(hr.cpu())
+                inputs, ecg = sample_batched['video'].to(self.device), \
+                    sample_batched['ecg'].to(self.device)
 
                 all_inputs = {
                     'input_clip': inputs,
@@ -209,6 +206,9 @@ class RppgEstimatorTrainer:
                 for batch_idx in range(rPPG.shape[0]):
                     psd_pred = cal_psd_hr(rPPG[batch_idx], self.frame_rate, return_type='psd')
                     hr_pred.append(psd_pred.max(0)[1].cpu() + 40)
+
+                    psd_gt = cal_psd_hr(ecg[batch_idx], self.frame_rate, return_type='psd')
+                    hr_gt.append(psd_gt.max(0)[1].cpu() + 40)
 
         self.draw_rppg_ecg(rPPG, ecg, save_path_epoch)
         return self.update_best(epoch, hr_pred, hr_gt, val_type='clip')
