@@ -189,29 +189,51 @@ class RppgEstimatorTrainer:
         hr_gt = []
         hr_pred = []
 
-        val_rppg_estimator = build_model(self.args).to(self.device)
-        val_rppg_estimator.load_state_dict(torch.load(f'{self.save_ckpt_path}/rppg_estimator_stu_epoch_{epoch}.pth'))
-        val_rppg_estimator.eval()
-
         with torch.no_grad():
             for sample_batched in tqdm(val_dataloader):
-                inputs, ecg = sample_batched['video'].to(self.device), \
-                    sample_batched['ecg'].to(self.device)
+                inputs = sample_batched['video'].to(self.device)
+                ecg = sample_batched['ecg'].to(self.device)
 
-                all_inputs = {
-                    'input_clip': inputs,
-                }
-                outputs = val_rppg_estimator(all_inputs)
-                rPPG = outputs['rPPG']
-                for batch_idx in range(rPPG.shape[0]):
-                    psd_pred = cal_psd_hr(rPPG[batch_idx], self.frame_rate, return_type='psd')
-                    hr_pred.append(psd_pred.max(0)[1].cpu() + 40)
+                num_clip = 3
+                input_len = inputs.shape[2]
+                input_len = input_len - input_len % (num_clip * 4)
+                clip_len = input_len // num_clip
 
-                    psd_gt = cal_psd_hr(ecg[batch_idx], self.frame_rate, return_type='psd')
-                    hr_gt.append(psd_gt.max(0)[1].cpu() + 40)
+                inputs = inputs[:, :, :input_len, :, :]
+                ecg = ecg[:, :input_len]
 
-        self.draw_rppg_ecg(rPPG, ecg, save_path_epoch)
-        return self.update_best(epoch, hr_pred, hr_gt, val_type='clip')
+                new_args = deepcopy(self.args)
+                new_args.num_rppg = clip_len
+                val_rppg_estimator = build_model(new_args).to(self.device)
+                val_rppg_estimator.load_state_dict(
+                    torch.load(
+                        f'{self.save_ckpt_path}/rppg_estimator_stu_epoch_{epoch}.pth',
+                        map_location=self.device
+                    )
+                )
+                val_rppg_estimator.eval()
+
+                psd_gt_total = 0
+                psd_pred_total = 0
+
+                for idx in range(num_clip):
+                    inputs_iter = inputs[:, :, idx * clip_len:(idx + 1) * clip_len, :, :]
+                    ecg_iter = ecg[:, idx * clip_len:(idx + 1) * clip_len]
+
+                    psd_gt = cal_psd_hr(ecg_iter, self.frame_rate, return_type='psd')
+                    psd_gt_total += psd_gt.view(-1).max(0)[1].cpu() + 40
+
+                    outputs = val_rppg_estimator({'input_clip': inputs_iter})
+                    rPPG = outputs['rPPG']
+
+                    psd_pred = cal_psd_hr(rPPG[0], self.frame_rate, return_type='psd')
+                    psd_pred_total += psd_pred.view(-1).max(0)[1].cpu() + 40
+
+                hr_pred.append(psd_pred_total / num_clip)
+                hr_gt.append(psd_gt_total / num_clip)
+
+        self.draw_rppg_ecg(rPPG, ecg_iter, save_path_epoch)
+        return self.update_best(epoch, hr_pred, hr_gt, val_type='clip')    
 
     def initial_train_one_epoch(self, epoch, save_path_epoch, train_dataloader):
         with tqdm(range(len(train_dataloader))) as pbar:
