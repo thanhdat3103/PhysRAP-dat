@@ -211,7 +211,7 @@ class RppgEstimatorTrainer:
                     hr_pred.append(psd_pred.max(0)[1].cpu() + 40)
 
         self.draw_rppg_ecg(rPPG, ecg, save_path_epoch)
-        self.update_best(epoch, hr_pred, hr_gt, val_type='clip')
+        return self.update_best(epoch, hr_pred, hr_gt, val_type='clip')
 
     def initial_train_one_epoch(self, epoch, save_path_epoch, train_dataloader):
         with tqdm(range(len(train_dataloader))) as pbar:
@@ -638,6 +638,18 @@ class RppgEstimatorTrainer:
             self.logger.info(f'===== Training at the dataset : {self.all_datasets[0]} =====')
             self.initial_train(dataset_idx=0)
 
+        if self.args.source_only_eval:
+            self.logger.info(f'===== SOURCE-ONLY EVAL at the dataset : {self.all_datasets[0]} =====')
+            cur_mae, cur_rmse, cur_sd, cur_r = self.evaluate_clip(
+                epoch=self.args.epochs - 1,
+                val_dataloader=self.val_dataloaders[0]
+            )
+            self.logger.info(
+                f'===== SOURCE-ONLY RESULT =====\n'
+                f'MAE: {cur_mae}, RMSE: {cur_rmse}, SD: {cur_sd}, R: {cur_r}'
+            )
+            return
+
         mean_mae, mean_rmse, mean_sd, mean_r = [], [], [], []
         for i in range(max(1, start_dataset_idx), len(self.all_datasets)):
             self.logger.info(f'===== TTA at the dataset : {self.all_datasets[i]} =====')
@@ -721,6 +733,8 @@ if __name__ == '__main__':
             'gaussian_crop'
         ]
     )
+
+    parser.add_argument('--source_only_eval', action='store_true')
 
     args = parser.parse_args()
 
