@@ -30,4 +30,8 @@ baseline_lock/
 datasets/*/hdf5/
 datasets/*/extracted/
 datasets/*/raw_zip/
-datasets/*/manifests/*.csv
+datasets/*/manifests/*.csvslurm-*.out
+bad_*.txt
+bad_*.csv
+missing_*.csv
+vipl_bulk_failures_*.csv
