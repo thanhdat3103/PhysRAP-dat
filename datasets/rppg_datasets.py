@@ -189,8 +189,20 @@ class BaseDataset(Dataset):
         if [self.h, self.w] != video_x_aug.shape[1:3]:
             video_x_aug = torch.nn.functional.interpolate(video_x_aug, size=(self.h, self.w), mode='bilinear', align_corners=False)
 
+        wave = np.asarray(wave, dtype=np.float32)
+
+        if not np.all(np.isfinite(wave)):
+            print(f"[BAD_WAVE] nonfinite: {sample['location']} start_idx={start_idx}")
+            return self.__getitem__((index + 1) % len(self.data_list))
+
         wave = wave - wave.mean()
-        wave = wave / np.abs(wave).max()
+        den = np.abs(wave).max()
+
+        if (not np.isfinite(den)) or den < 1e-8:
+            print(f"[BAD_WAVE] flat wave: {sample['location']} start_idx={start_idx}")
+            return self.__getitem__((index + 1) % len(self.data_list))
+
+        wave = wave / den
         wave = torch.from_numpy(wave).float()
 
         sample_item = {}
