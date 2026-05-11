@@ -322,16 +322,12 @@ def calc_alignment_coefficients(pa, pb):
     return np.array(res).reshape(8)
 
 def augment_flip(clip):
-    if torch.rand(1) > 0.8:
-        clip = torch.flip(clip, [4])
-        clip = torch.flip(clip, [3])
-    return clip
-
+    # horizontal mirror only
+    return torch.flip(clip, [4]).contiguous()
 
 def augment_time_reversal(clip):
-    if torch.rand(1) > 0.8:
-        clip = torch.roll(clip, clip.shape[2] // 4, 2)
-    return clip
+    # true temporal reversal
+    return torch.flip(clip, [2]).contiguous()
 
 def resize_clip(clip, length):
     '''
@@ -345,21 +341,19 @@ def resize_clip(clip, length):
     clip = F.interpolate(clip, (T, length, length), mode='trilinear', align_corners=False)
     return clip
 
-def random_resized_crop(clip, crop_scale_lims=[0.4, 1]):
-    ''' Randomly crop a subregion of the video and resize it back to original size.
-    Arguments:
-        clip (np.array): expects [B,C,T,H,W]
-    Returns:
-        clip (np.array): same dimensions as input
-    '''
+def random_resized_crop(clip, crop_scale_lims=[0.4, 1.0]):
+    """Randomly crop a 2D spatial subregion and resize back to original size."""
     crop_scale = np.random.uniform(crop_scale_lims[0], crop_scale_lims[1])
-    crop_length = np.round(crop_scale * clip.shape[3]).astype(int)
-    crop_start_lim = np.max(clip.shape[3] - (crop_length), 0)
-    x1 = np.random.randint(0, crop_start_lim+1)
-    y1 = x1
+    crop_length = max(1, int(np.round(crop_scale * clip.shape[3])))
+    crop_start_lim = max(clip.shape[3] - crop_length, 0)
+
+    x1 = np.random.randint(0, crop_start_lim + 1)
+    y1 = np.random.randint(0, crop_start_lim + 1)
+
     x2 = x1 + crop_length
     y2 = y1 + crop_length
-    cropped_clip = clip[:,:,:,y1:y2,x1:x2]
+
+    cropped_clip = clip[:, :, :, y1:y2, x1:x2]
     resized_clip = resize_clip(cropped_clip, clip.shape[3])
     return resized_clip
 

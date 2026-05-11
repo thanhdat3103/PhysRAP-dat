@@ -193,6 +193,7 @@ class RppgEstimatorTrainer:
             for sample_batched in tqdm(val_dataloader):
                 inputs = sample_batched['video'].to(self.device)
                 ecg = sample_batched['ecg'].to(self.device)
+                clip_average_HR = sample_batched['clip_avg_hr'].to(self.device)
 
                 num_clip = 3
                 input_len = inputs.shape[2]
@@ -229,8 +230,15 @@ class RppgEstimatorTrainer:
                     psd_pred = cal_psd_hr(rPPG[0], self.frame_rate, return_type='psd')
                     psd_pred_total += psd_pred.view(-1).max(0)[1].cpu() + 40
 
-                hr_pred.append(psd_pred_total / num_clip)
-                hr_gt.append(psd_gt_total / num_clip)
+                hr_pred.append(float((psd_pred_total / num_clip).item()))
+
+                if self.args.eval_gt_mode == 'label':
+                    # Use the stored HDF5 gt_hr / clip_avg_hr label as evaluation GT.
+                    # This is also the HR target used by ce_loss during training.
+                    hr_gt.append(float(clip_average_HR.detach().view(-1).float().mean().cpu().item()))
+                else:
+                    # Original diagnostic mode: recompute GT HR from ECG PSD.
+                    hr_gt.append(float((psd_gt_total / num_clip).item()))
 
         self.draw_rppg_ecg(rPPG, ecg_iter, save_path_epoch)
         return self.update_best(epoch, hr_pred, hr_gt, val_type='clip')    
@@ -340,6 +348,13 @@ class RppgEstimatorTrainer:
             for _ in range(N):
                 aug_videos.append(random.choice(available_augs)(inputs))
             return aug_videos
+        
+        def hr_bpm_from_rppg_batch(rppg_batch):
+            bpm_list = []
+            for b in range(rppg_batch.shape[0]):
+                psd = cal_psd_hr(rppg_batch[b], self.frame_rate, return_type='psd')
+                bpm_list.append((psd.view(-1).max(0)[1] + 40).float())
+            return torch.stack(bpm_list, 0)
 
         LOAD_DATASET = dataset_idx - 1
         self.rppg_estimator_stu.load_state_dict(
@@ -380,6 +395,8 @@ class RppgEstimatorTrainer:
         tta_dataloader = self.val_dataloaders[dataset_idx]
         hr_gt = []
         hr_pred = []
+        debug_max_clips = 40
+        debug_seen = 0
 
         for sample_batched in tqdm(tta_dataloader):
             inputs, ecg, clip_average_HR = sample_batched['video'].to(self.device), \
@@ -422,6 +439,7 @@ class RppgEstimatorTrainer:
                     output_psd = cal_psd_hr(origional_rppg[batch_idx], self.frame_rate, return_type='psd')
                     origional_psds.append(output_psd)
                 origional_psds = torch.stack(origional_psds, 0)  # [B, 140]
+                hr_before = hr_bpm_from_rppg_batch(origional_rppg)
 
                 ## Step 3: pseudo labels from uncertainty
                 all_batch_rppg_uncertainty = []
@@ -449,6 +467,7 @@ class RppgEstimatorTrainer:
                     pesudo_label_psd_hr.append(pesudo_label_psd_per_batch.mean(0).max(0)[1] + 40)
                 all_batch_psd_uncertainty = torch.stack(all_batch_psd_uncertainty, 0)  # [B, N]
                 pesudo_label_hr = torch.stack(pesudo_label_psd_hr, 0)
+                pseudo_hr = pesudo_label_hr.float()
 
                 ## Step 4: store original params
                 origional_params = {
@@ -491,6 +510,7 @@ class RppgEstimatorTrainer:
                             need_to_update[fisher_grads_name[i]] = origional_params[fisher_grads_name[i]]
 
                     selected_after_priors = len(need_to_update)
+                    selected_after_rs = selected_after_priors
 
                     # RS: relatedness-based pruning using off-diagonal FIM
                     if use_rs:
@@ -578,6 +598,20 @@ class RppgEstimatorTrainer:
                             with torch.no_grad():
                                 p.data = origional_params[key] * mask + p * (1. - mask)
 
+                param_delta_sum = 0.0
+                param_delta_max = 0.0
+                changed_param_count = 0
+
+                for nm, m in self.rppg_estimator_stu.named_modules():
+                    for npp, p in m.named_parameters():
+                        key = f"{nm}.{npp}"
+                        if npp in ['weight', 'bias'] and p.requires_grad and key in need_to_update:
+                            delta = torch.norm((p.data - origional_params[key]).view(-1), p=2).item()
+                            param_delta_sum += delta
+                            param_delta_max = max(param_delta_max, delta)
+                            if delta > 1e-12:
+                                changed_param_count += 1                
+
                 ## Step 9: EMA update the teacher model
                 alpha = self.args.tta_teacher_alpha
                 for param_teacher, param_student in zip(
@@ -585,6 +619,57 @@ class RppgEstimatorTrainer:
                     self.rppg_estimator_stu.parameters()
                 ):
                     param_teacher.data = alpha * param_teacher.data + (1 - alpha) * param_student.data
+
+                with torch.no_grad():
+                    adapted_rppg = self.rppg_estimator_stu({'input_clip': clip_input})['rPPG']
+                    hr_after = hr_bpm_from_rppg_batch(adapted_rppg)
+
+                after_psds = []
+                for batch_idx in range(adapted_rppg.shape[0]):
+                    after_psd = cal_psd_hr(adapted_rppg[batch_idx], self.frame_rate, return_type='psd')
+                    after_psds.append(after_psd)
+                after_psds = torch.stack(after_psds, 0)
+
+                gt_flat = clip_average_HR.detach().view(-1).cpu()
+                before_flat = hr_before.detach().view(-1).cpu()
+                pseudo_flat = pseudo_hr.detach().view(-1).cpu()
+                after_flat = hr_after.detach().view(-1).cpu()
+
+                debug_slots = min(before_flat.numel(), pseudo_flat.numel(), after_flat.numel())
+
+                self.logger.info(
+                    f'[STEPDBG] dataset_idx={dataset_idx} clip_group={clip_idx} '
+                    f'fre_loss={fre_loss.item():.4f} kl_loss={kl_loss.item():.4f} '
+                    f'selected_after_priors={selected_after_priors} selected_after_rs={selected_after_rs} '
+                    f'changed_param_count={changed_param_count} param_delta_sum={param_delta_sum:.8f} param_delta_max={param_delta_max:.8f}'
+                )
+
+                for batch_idx in range(debug_slots):
+                    if debug_seen >= debug_max_clips:
+                        break
+
+                    gt_idx = batch_idx if (gt_flat.numel() > 1 and batch_idx < gt_flat.numel()) else 0
+
+                    gt_bpm = float(gt_flat[gt_idx].item())
+                    before_bpm = float(before_flat[batch_idx].item())
+                    pseudo_bpm = float(pseudo_flat[batch_idx].item())
+                    after_bpm = float(after_flat[batch_idx].item())
+
+                    err_before = abs(before_bpm - gt_bpm)
+                    err_after = abs(after_bpm - gt_bpm)
+
+                    rppg_l2 = torch.norm(adapted_rppg[batch_idx] - origional_rppg[batch_idx], p=2).item()
+                    psd_l2 = torch.norm(after_psds[batch_idx] - origional_psds[batch_idx], p=2).item()
+
+                    self.logger.info(
+                        f'[ADAPTDBG] dataset_idx={dataset_idx} clip_group={clip_idx} batch_idx={batch_idx} '
+                        f'gt={gt_bpm:.2f} before={before_bpm:.2f} pseudo={pseudo_bpm:.2f} after={after_bpm:.2f} '
+                        f'err_before={err_before:.2f} err_after={err_after:.2f} delta_err={err_after - err_before:.2f} '
+                        f'rppg_l2={rppg_l2:.8f} psd_l2={psd_l2:.8f} '
+                        f'fre_loss={fre_loss.item():.4f} kl_loss={kl_loss.item():.4f} '
+                        f'selected_after_priors={selected_after_priors} selected_after_rs={selected_after_rs}'
+                    )
+                    debug_seen += 1
 
             ## Final inference after adapting all clips of the video
             torch.save(
@@ -629,8 +714,15 @@ class RppgEstimatorTrainer:
                     psd_pred = cal_psd_hr(rPPG[0], self.frame_rate, return_type='psd')
                     psd_pred_total += psd_pred.view(-1).max(0)[1].cpu() + 40
 
-                hr_pred.append(psd_pred_total / num_clip)
-                hr_gt.append(psd_gt_total / num_clip)
+                hr_pred.append(float((psd_pred_total / num_clip).item()))
+
+                if self.args.eval_gt_mode == 'label':
+                    # Use the stored HDF5 gt_hr / clip_avg_hr label as evaluation GT.
+                    # This is also the HR target used by ce_loss during training.
+                    hr_gt.append(float(clip_average_HR.detach().view(-1).float().mean().cpu().item()))
+                else:
+                    # Original diagnostic mode: recompute GT HR from ECG PSD.
+                    hr_gt.append(float((psd_gt_total / num_clip).item()))
 
         cur_mae, cur_rmse, cur_sd, cur_r = self.update_best(-1, hr_pred, hr_gt, val_type='clip')
 
@@ -653,7 +745,8 @@ class RppgEstimatorTrainer:
             f'dataset: {self.args.datasets}, num_rppg: {self.args.num_rppg}, model: {self.args.model}, loss: {self.loss_funcs_weight}.\n'
             f'batch_size: {self.actual_batch_size}, lr: {self.args.lr}, optim: {self.args.optim}, scheduler: {self.args.scheduler}.\n'
             f'ablation_mode: {self.args.ablation_mode}\n'
-            f'tta_aug_mode: {self.args.tta_aug_mode}'
+            f'tta_aug_mode: {self.args.tta_aug_mode}\n'
+            f'eval_gt_mode: {self.args.eval_gt_mode}'
         )
 
         if start_dataset_idx == 0:
@@ -757,6 +850,14 @@ if __name__ == '__main__':
     )
 
     parser.add_argument('--source_only_eval', action='store_true')
+
+    parser.add_argument(
+        '--eval_gt_mode',
+        type=str,
+        default='label',
+        choices=['label', 'ecg_psd'],
+        help='GT source for evaluation: stored HDF5 gt_hr/clip_avg_hr label or ECG-PSD-derived HR'
+    )
 
     args = parser.parse_args()
 

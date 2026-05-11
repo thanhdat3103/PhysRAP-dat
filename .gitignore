@@ -35,3 +35,24 @@ bad_*.txt
 bad_*.csv
 missing_*.csv
 vipl_bulk_failures_*.csv
+
+# Local experiment artifacts
+logs/
+slurm-*.out
+*.out
+*.pth
+*.pt
+*.ckpt
+*.h5
+*.hdf5
+physrap_runs/
+rppg/
+ckpt/
+__pycache__/
+*.pyc
+
+# Local environment
+.env
+venv/
+.venv/
+physrap_env.sh
