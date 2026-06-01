@@ -56,3 +56,4 @@ __pycache__/
 venv/
 .venv/
 physrap_env.sh
+slurm-*.err
