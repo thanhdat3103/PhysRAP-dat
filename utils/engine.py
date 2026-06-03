@@ -2,7 +2,7 @@ import os
 import torch
 import numpy as np
 from torch.utils.data import DataLoader
-from datasets.rppg_datasets import VIPL, PURE, PUREA
+from datasets.rppg_datasets import VIPL, UBFC, PURE, PUREA
 from losses.NPLoss import Neg_Pearson
 from losses.CELoss import CrossEntropyKL
 from archs.ResNet3D import generate_model
@@ -11,6 +11,7 @@ dataset_path_map = {
     'PURE': os.environ.get('PHYSRAP_PURE_DIR', '/data/your_path/pure'),
     'PUREA': os.environ.get('PHYSRAP_PURE_DIR', '/data/your_path/pure'),
     'VIPL': os.environ.get('PHYSRAP_VIPL_DIR', '/data/your_path/vipl'),
+    'UBFC': os.environ.get('PHYSRAP_UBFC_DIR', '/data/your_path/ubfc'),
 }
 
 def _init_fn(seed=92):
@@ -37,6 +38,14 @@ def build_one_dataset(dataset_name, args, mode):
         )
     elif dataset_name == 'PUREA':
         dataset = PUREA(
+            data_dir=dataset_path_map[dataset_name],
+            T=num_rppg,
+            train=train_mode,
+            w=args.img_size,
+            h=args.img_size
+        )
+    elif dataset_name == 'UBFC':
+        dataset = UBFC(
             data_dir=dataset_path_map[dataset_name],
             T=num_rppg,
             train=train_mode,

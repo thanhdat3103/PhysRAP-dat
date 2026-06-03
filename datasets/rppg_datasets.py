@@ -248,6 +248,35 @@ class PUREA(PURE):
     def __init__(self, data_dir='', train='train', T=-1, w=64, h=64):
         super().__init__(data_dir, train, T, w, h, aug='figc')
 
+
+class UBFC(BaseDataset):
+    def __init__(self, data_dir='', train='train', T=-1, w=64, h=64, aug=''):
+        super().__init__(data_dir, train, T, w, h, aug=aug)
+
+    def get_data_list(self):
+        sample_dirs = []
+        for name in sorted(os.listdir(self.data_dir)):
+            sample_dir = os.path.join(self.data_dir, name)
+            h5_path = os.path.join(sample_dir, 'sample.hdf5')
+            if os.path.isdir(sample_dir) and os.path.exists(h5_path):
+                sample_dirs.append(sample_dir)
+
+        for sample_dir in sample_dirs:
+            h5_path = os.path.join(sample_dir, 'sample.hdf5')
+            with h5py.File(h5_path, 'r') as f:
+                video_length = f['video_data'].shape[1]
+
+            if self.T != -1 and video_length < self.T:
+                continue
+
+            sample_num = video_length // self.T if self.T != -1 else 1
+            for i in range(sample_num):
+                sample = {}
+                sample['location'] = sample_dir
+                sample['start_idx'] = i * self.T if self.T != -1 else 0
+                sample['video_length'] = video_length
+                self.data_list.append(sample)
+
 class VIPL(BaseDataset):
     def __init__(self, data_dir='', train='train', T=-1, w=64, h=64, aug='', fold=1, manifest_path=None):
         self.fold = int(fold)
