@@ -5,6 +5,7 @@ import numpy as np
 import random
 import time
 import argparse
+import csv
 import logging
 import shutil
 
@@ -725,6 +726,25 @@ class RppgEstimatorTrainer:
                     hr_gt.append(float((psd_gt_total / num_clip).item()))
 
         cur_mae, cur_rmse, cur_sd, cur_r = self.update_best(-1, hr_pred, hr_gt, val_type='clip')
+
+        online_csv = os.path.join(self.save_path, f'online_ctta_predictions_dataset_{dataset_idx}.csv')
+
+        def _to_float(x):
+            if hasattr(x, 'detach'):
+                x = x.detach().cpu()
+            if hasattr(x, 'item'):
+                return float(x.item())
+            return float(x)
+
+        with open(online_csv, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(['index', 'gt_bpm', 'pred_bpm', 'abs_error'])
+            for pred_idx, (gt_val, pred_val) in enumerate(zip(hr_gt, hr_pred)):
+                gt_float = _to_float(gt_val)
+                pred_float = _to_float(pred_val)
+                writer.writerow([pred_idx, gt_float, pred_float, abs(pred_float - gt_float)])
+
+        self.logger.info(f'online_ctta_predictions_csv: {online_csv}')
 
         torch.save(
             self.rppg_estimator_stu.state_dict(),
